@@ -9,86 +9,59 @@ permissions:
   contents: read
 
 jobs:
-  watch:
+  run:
     runs-on: ubuntu-latest
-
-    env:
-      # --- Script configuration (override as needed) ---
-      AMUL_CATEGORY: protein
-      AMUL_SUBSTORE: 66505ff8c8f2d6e221b9180c
-      AMUL_LIMIT: "24"
-      AMUL_START: "0"
-      # Track Rose Lassi availability by default; comma-separate for more
-      AMUL_TARGET_ALIASES: "amul-high-protein-rose-lassi-200-ml-or-pack-of-30"
-      # Repo variable you already created (0/1)
-      FORCE_ALERT: ${{ vars.FORCE_ALERT }}
-      # Optional: define a secret for Slack/Discord/etc.
-      WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Create the /state directory the script expects.
-      - name: Prepare /state directory
-        run: sudo mkdir -p /state && sudo chmod 777 /state
-
-      # Restore previous state across runs using cache (best-effort).
-      # We cache the whole /state dir. The key includes a hash of the file if present
-      # so newer runs can restore the most recent version via restore-keys prefix.
-      - name: Compute cache key
-        id: keygen
-        run: |
-          if [ -f /state/amul_state.json ]; then
-            HASH=$(sha256sum /state/amul_state.json | cut -d' ' -f1)
-          else
-            HASH=empty
-          fi
-          echo "key=amul-state-v1-${HASH}" >> "$GITHUB_OUTPUT"
-          echo "prefix=amul-state-v1-" >> "$GITHUB_OUTPUT"
-
-      - name: Restore /state cache
-        id: cache-restore
-        uses: actions/cache/restore@v4
+      # Restore/persist the local state file across runs
+      - name: Restore state.json cache
+        uses: actions/cache@v4
         with:
-          path: /state
-          key: ${{ steps.keygen.outputs.key }}
+          path: state.json
+          key: amul-watch-state-${{ runner.os }}-v1-${{ github.run_id }}
           restore-keys: |
-            ${{ steps.keygen.outputs.prefix }}
+            amul-watch-state-${{ runner.os }}-v1-
 
-      - name: Set up Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install Python deps
+      - name: Install deps
         run: |
           python -m pip install --upgrade pip
-          pip install requests playwright
-
-      - name: Install Playwright browser
-        run: |
-          python -m playwright install --with-deps chromium
+          pip install requests
 
       - name: Run watcher
-        run: |
-          chmod +x amul_watch.py
-          ./amul_watch.py
+        env:
+          # --- required for notifications; you already created these as repo secrets ---
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
 
-      # Save updated state so the next run can restore it.
-      - name: Recompute cache key after run
-        id: keygen_after
+          # --- watcher settings ---
+          # Single alias only (as requested)
+          AMUL_TARGET_ALIASES: "amul-high-protein-rose-lassi-200-ml-or-pack-of-30"
+          # Force an alert even without a change? (0/1)
+          FORCE_ALERT: "0"
+          # Pincode you gave (maps to substore on the fly)
+          AMUL_PINCODE: "251001"
         run: |
-          if [ -f /state/amul_state.json ]; then
-            HASH=$(sha256sum /state/amul_state.json | cut -d' ' -f1)
-          else
-            HASH=empty
-          fi
-          echo "key=amul-state-v1-${HASH}" >> "$GITHUB_OUTPUT"
+          python amul_watch.py
 
-      - name: Save /state cache
+      # Save updated state.json back into the cache key for this run
+      - name: Save state.json (artifact for inspection)
         if: always()
-        uses: actions/cache/save@v4
+        uses: actions/upload-artifact@v4
         with:
-          path: /state
-          key: ${{ steps.keygen_after.outputs.key }}
+          name: state-json
+          path: state.json
+          if-no-files-found: ignore
