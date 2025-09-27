@@ -24,4 +24,5 @@ jobs:
           SMTP_PASS:          ${{ secrets.SMTP_PASS }}
           EMAIL_TO:           ${{ secrets.EMAIL_TO }}
           EMAIL_FROM:         ${{ secrets.EMAIL_FROM }}
+          FORCE_ALERT:        ${{ vars.FORCE_ALERT }}
         run: python amul_watch.py
