@@ -21,23 +21,10 @@ load_dotenv()
 # ======================================
 # Config
 # ======================================
+
 # Hardcoded list of target aliases
 TARGET_ALIASES: List[str] = [
-    "amul-high-protein-rose-lassi-200-ml-or-pack-of-30",
-    # Uncomment any others you want to track:
-    # "amul-protein-buttermilk-200-ml-or-pack-of-30",
-    # "amul-protein-lassi-200-ml-or-pack-of-30",
-    # "amul-protein-milk-200-ml-or-pack-of-6",
-    # "amul-protein-milk-1-litre",
-    # "amul-protein-whey-protein-chocolate-500-g",
-    # "amul-protein-whey-protein-vanilla-500-g",
-    # "amul-protein-powder-cafe-mocha-500-g",
-    # "amul-high-protein-paneer-200-g",
-    # "amul-high-protein-dahi-400-g",
-    # "amul-high-protein-milk-1-litre",
-    # "amul-high-protein-rose-lassi-single-200-ml",
-    # "amul-high-protein-badam-shake-200-ml",
-    # "amul-high-protein-kesar-badam-milk-200-ml",
+    "amul-high-protein-rose-lassi-200-ml-or-pack-of-30"
 ]
 FORCE_ALERT = os.getenv("FORCE_ALERT", "0").strip() in ("1", "true", "True")
 
@@ -443,7 +430,7 @@ def main() -> None:
 
             block = (
                 f"🛎 <b>{title}</b>\n"
-                f"{change_text} : Local Run\n"
+                f"{change_text} : GithubAction Run\n"
                 f"Price: {price} | Inventory: {inv} | Available: {avail}\n"
                 f"{purl}"
             )
@@ -487,10 +474,10 @@ def main() -> None:
         text_plain = "\n\n".join(b.replace("<b>", "").replace("</b>", "") for b in alert_blocks)
         text_html_joined = "\n\n".join(alert_blocks)  # keep \n; no <br> for Telegram
 
-        # em_err = send_email(subject, text_plain)
+        em_err = send_email(subject, text_plain)
         tg_err = send_telegram(text_html_joined)
 
-        # if em_err: log.warning(em_err)
+        if em_err: log.warning(em_err)
         if tg_err: log.warning(tg_err)
 
     sys.exit(0)
