@@ -2,43 +2,20 @@ name: Amul Watch
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    - cron: "*/5 * * * *"   # every 5 minutes (UTC)
   workflow_dispatch:
-
-concurrency:
-  group: amul-watch
-  cancel-in-progress: true
 
 jobs:
   check:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-
-      - name: Cache pip dependencies
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Install Playwright Chromium
-        run: python -m playwright install chromium
-
-      - name: Add random jitter
-        run: sleep $((RANDOM % 10))
-
-      - name: Run watcher
-        env:
+      - run: pip install -r requirements.txt
+      - run: python -m playwright install chromium
+      - env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
           SMTP_HOST:          ${{ secrets.SMTP_HOST }}
