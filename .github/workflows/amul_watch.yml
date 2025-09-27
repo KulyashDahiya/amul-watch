@@ -46,10 +46,9 @@ jobs:
 
       - name: Run Amul Watch
         env:
-          
           AMUL_PINCODE: "251001"
 
-          # --- OPTIONAL flags (set repo variable if you want) ---
+          # Uses Repo Variable ; Default is disabled.
           FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
 
           # --- FORCE_ALERT hardcoded as disabled ---
