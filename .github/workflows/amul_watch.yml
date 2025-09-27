@@ -1,67 +1,72 @@
-name: Amul Watch (every 5 min)
+name: Amul Watch
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
-  workflow_dispatch:
+    - cron: "*/5 * * * *"   # every 5 minutes
+  workflow_dispatch: {}
 
 permissions:
   contents: read
 
 jobs:
-  run:
+  watch:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      # Restore/persist the local state file across runs
-      - name: Restore state.json cache
-        uses: actions/cache@v4
-        with:
-          path: state.json
-          key: amul-watch-state-${{ runner.os }}-v1-${{ github.run_id }}
-          restore-keys: |
-            amul-watch-state-${{ runner.os }}-v1-
-
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install deps
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests
+          pip install -r requirements.txt
 
-      - name: Run watcher
+      - name: Install Playwright Chromium (fallback path)
+        run: python -m playwright install chromium
+
+      - name: Prepare state file
+        run: |
+          # ensure state.json exists in repo root
+          if [ ! -f state.json ]; then
+            echo "{}" > state.json
+          fi
+
+      - name: Run Amul Watch
         env:
-          # --- required for notifications; you already created these as repo secrets ---
+          # --- REQUIRED for your use-case ---
+          AMUL_TARGET_ALIASES: "amul-high-protein-rose-lassi-200-ml-or-pack-of-30"
+          AMUL_PINCODE: "251001"
+
+          # --- OPTIONAL flags (set repo variable if you want) ---
+          FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
+
+          # --- OPTIONAL notifiers (leave blank if unused) ---
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
-          # --- watcher settings ---
-          # Single alias only (as requested)
-          AMUL_TARGET_ALIASES: "amul-high-protein-rose-lassi-200-ml-or-pack-of-30"
-          # Force an alert even without a change? (0/1)
-          FORCE_ALERT: "0"
-          # Pincode you gave (maps to substore on the fly)
-          AMUL_PINCODE: "251001"
         run: |
           python amul_watch.py
 
-      # Save updated state.json back into the cache key for this run
-      - name: Save state.json (artifact for inspection)
+      - name: Upload job summary (always show)
         if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: state-json
-          path: state.json
-          if-no-files-found: ignore
+        run: |
+          echo "Run finished at $(date -u +"%Y-%m-%d %H:%M:%SZ")" >> "$GITHUB_STEP_SUMMARY"
