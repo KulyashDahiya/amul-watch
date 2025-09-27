@@ -24,7 +24,13 @@ load_dotenv()
 
 # Hardcoded list of target aliases
 TARGET_ALIASES: List[str] = [
-    "amul-high-protein-rose-lassi-200-ml-or-pack-of-30"
+    # Lassi/Shakes
+    "amul-high-protein-rose-lassi-200-ml-or-pack-of-30",
+    # "amul-high-protein-blueberry-shake-200-ml-or-pack-of-30",
+
+    # Whey
+    # "amul-whey-protein-gift-pack-32-g-or-pack-of-10-sachets",
+    # "amul-whey-protein-32-g-or-pack-of-30-sachets",
 ]
 FORCE_ALERT = os.getenv("FORCE_ALERT", "0").strip() in ("1", "true", "True")
 
@@ -430,7 +436,7 @@ def main() -> None:
 
             block = (
                 f"🛎 <b>{title}</b>\n"
-                f"{change_text} : GithubAction Run\n"
+                f"{change_text} : Local Run\n"
                 f"Price: {price} | Inventory: {inv} | Available: {avail}\n"
                 f"{purl}"
             )
