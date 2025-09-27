@@ -47,11 +47,30 @@ jobs:
       - name: Run Amul Watch
         env:
           # --- REQUIRED for my use-case ---
-          AMUL_TARGET_ALIASES: "amul-high-protein-rose-lassi-200-ml-or-pack-of-30"
+          # AMUL_TARGET_ALIASES: "amul-high-protein-rose-lassi-200-ml-or-pack-of-30"
           AMUL_PINCODE: "251001"
 
+          AMUL_TARGET_ALIASES: |
+            amul-high-protein-rose-lassi-200-ml-or-pack-of-30
+            # amul-protein-buttermilk-200-ml-or-pack-of-30
+            # amul-protein-lassi-200-ml-or-pack-of-30
+            # amul-protein-milk-200-ml-or-pack-of-6
+            # amul-protein-milk-1-litre
+            # amul-protein-whey-protein-chocolate-500-g
+            # amul-protein-whey-protein-vanilla-500-g
+            # amul-protein-powder-cafe-mocha-500-g
+            amul-high-protein-paneer-200-g
+            # amul-high-protein-dahi-400-g
+            # amul-high-protein-milk-1-litre
+            # amul-high-protein-rose-lassi-single-200-ml
+            # amul-high-protein-badam-shake-200-ml
+            # amul-high-protein-kesar-badam-milk-200-ml
+
           # --- OPTIONAL flags (set repo variable if you want) ---
-          FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
+          # FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
+
+          # --- FORCE_ALERT hardcoded, 0 : disabled ; 1 : enabled ---
+          FORCE_ALERT: "1"
 
           # --- OPTIONAL notifiers (leave blank if unused) ---
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
