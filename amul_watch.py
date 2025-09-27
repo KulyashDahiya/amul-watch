@@ -12,16 +12,29 @@ load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-def fetch_html():
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        ctx = browser.new_context(user_agent="Mozilla/5.0")
-        page = ctx.new_page()
+def fetch_html(browser=None, context=None):
+    """
+    Fetch HTML using Playwright. If browser/context provided, reuse them for speed.
+    """
+    close_browser = False
+    if browser is None or context is None:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            context = browser.new_context(user_agent="Mozilla/5.0")
+            page = context.new_page()
+            page.set_default_timeout(TIMEOUT * 1000)
+            page.goto(PRODUCT_URL, wait_until="networkidle")
+            page.wait_for_timeout(1500)
+            html = page.content()
+            browser.close()
+            return html
+    else:
+        page = context.new_page()
         page.set_default_timeout(TIMEOUT * 1000)
         page.goto(PRODUCT_URL, wait_until="networkidle")
         page.wait_for_timeout(1500)
         html = page.content()
-        browser.close()
+        page.close()
         return html
 
 def detect_status(html: str) -> str:
@@ -99,22 +112,27 @@ def notify_email(subject: str, body: str):
     except Exception:
         pass
 
+
 def main():
-    html = fetch_html()
-    status = detect_status(html)
-    state = load_state()
-    prev = state.get("status")
+    # For single run, this is same as before. For repeated checks, reuse browser/context.
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        context = browser.new_context(user_agent="Mozilla/5.0")
+        html = fetch_html(browser, context)
+        status = detect_status(html)
+        state = load_state()
+        prev = state.get("status")
 
-    # For testing alerts: set env FORCE_ALERT=1 in the workflow dispatch
-    force = os.getenv("FORCE_ALERT") == "1"
+        # For testing alerts: set env FORCE_ALERT=1 in the workflow dispatch
+        force = os.getenv("FORCE_ALERT") == "1"
 
-    if (status == "available" and prev != "available") or force:
-        msg = f"Amul product is {status.upper()} → {PRODUCT_URL}"
-        notify_telegram(msg)
-        notify_email(f"Amul product {status}", msg)
+        if (status == "available" and prev != "available") or force:
+            msg = f"Amul product is {status.upper()} → {PRODUCT_URL}"
+            notify_telegram(msg)
+            notify_email(f"Amul product {status}", msg)
 
-    state["status"] = status
-    save_state(state)
+        state["status"] = status
+        save_state(state)
 
 if __name__ == "__main__":
     main()
