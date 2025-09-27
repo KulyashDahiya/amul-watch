@@ -2,27 +2,71 @@ name: Amul Watch
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # every 5 minutes (UTC)
-  workflow_dispatch:
+    - cron: "*/5 * * * *"   # every 5 minutes
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
 
 jobs:
-  check:
+  watch:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - run: python -m playwright install chromium
-      - env:
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Install Playwright Chromium (fallback path)
+        run: python -m playwright install chromium
+
+      - name: Prepare state file
+        run: |
+          # ensure state.json exists in repo root
+          if [ ! -f state.json ]; then
+            echo "{}" > state.json
+          fi
+
+      - name: Run Amul Watch
+        env:
+          # --- REQUIRED for your use-case ---
+          AMUL_TARGET_ALIASES: "amul-high-protein-rose-lassi-200-ml-or-pack-of-30"
+          AMUL_PINCODE: "251001"
+
+          # --- OPTIONAL flags (set repo variable if you want) ---
+          FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
+
+          # --- OPTIONAL notifiers (leave blank if unused) ---
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-          SMTP_HOST:          ${{ secrets.SMTP_HOST }}
-          SMTP_PORT:          ${{ secrets.SMTP_PORT }}
-          SMTP_USER:          ${{ secrets.SMTP_USER }}
-          SMTP_PASS:          ${{ secrets.SMTP_PASS }}
-          EMAIL_TO:           ${{ secrets.EMAIL_TO }}
-          EMAIL_FROM:         ${{ secrets.EMAIL_FROM }}
-          FORCE_ALERT:        ${{ vars.FORCE_ALERT }}
-        run: python amul_watch.py
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USER: ${{ secrets.SMTP_USER }}
+          SMTP_PASS: ${{ secrets.SMTP_PASS }}
+        run: |
+          python amul_watch.py
+
+      - name: Upload job summary (always show)
+        if: always()
+        run: |
+          echo "Run finished at $(date -u +"%Y-%m-%d %H:%M:%SZ")" >> "$GITHUB_STEP_SUMMARY"
