@@ -46,12 +46,14 @@ jobs:
 
       - name: Run Amul Watch
         env:
-          # --- REQUIRED for my use-case ---
-          AMUL_TARGET_ALIASES: "amul-high-protein-rose-lassi-200-ml-or-pack-of-30"
+          
           AMUL_PINCODE: "251001"
 
           # --- OPTIONAL flags (set repo variable if you want) ---
-          FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
+          # FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
+
+          # --- FORCE_ALERT hardcoded as disabled ---
+          FORCE_ALERT: "0"
 
           # --- OPTIONAL notifiers (leave blank if unused) ---
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
