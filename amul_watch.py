@@ -1,80 +1,91 @@
-import os, re, json, time, requests
+
+# --- Improved version ---
+import os, re, json, time, random, requests, logging
 from bs4 import BeautifulSoup
 from dotenv import load_dotenv
 from pathlib import Path
-from playwright.sync_api import sync_playwright
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+from datetime import datetime, timedelta, timezone
 
 PRODUCT_URL = "https://shop.amul.com/en/product/amul-high-protein-rose-lassi-200-ml-or-pack-of-30"
 STATE_FILE = Path("state.json")
 TIMEOUT = 30
+RETRY_LIMIT = 3
+RETRY_BASE = 2
+RETRY_JITTER = 2  
+RE_ALERT_HOURS = 12
 
 load_dotenv()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+logging.basicConfig(level=logging.INFO)
+
 def fetch_html():
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=True)
-        ctx = browser.new_context(user_agent="Mozilla/5.0")
-        page = ctx.new_page()
-        page.set_default_timeout(TIMEOUT * 1000)
-        page.goto(PRODUCT_URL, wait_until="networkidle")
-        page.wait_for_timeout(1500)
-        html = page.content()
-        browser.close()
-        return html
+    for attempt in range(RETRY_LIMIT):
+        try:
+            with sync_playwright() as p:
+                browser = p.chromium.launch(headless=True)
+                ctx = browser.new_context(user_agent="Mozilla/5.0")
+                # Block images, fonts, media
+                ctx.route("**/*", lambda route, req: route.abort() if req.resource_type in ["image", "media", "font"] else route.continue_())
+                page = ctx.new_page()
+                page.set_default_timeout(TIMEOUT * 1000)
+                page.goto(PRODUCT_URL, wait_until="networkidle")
+                page.wait_for_timeout(1500)
+                html = page.content()
+                browser.close()
+                return html
+        except Exception as e:
+            wait = RETRY_BASE ** attempt + random.uniform(0, RETRY_JITTER)
+            logging.warning(f"Fetch failed (attempt {attempt+1}/{RETRY_LIMIT}): {e}. Retrying in {wait:.1f}s...")
+            time.sleep(wait)
+    raise RuntimeError("Failed to fetch product page after retries.")
 
 def detect_status(html: str) -> str:
     soup = BeautifulSoup(html, "lxml")
-
-    # explicit “Sold Out”
-    if soup.find(string=lambda t: t and "sold out" in t.lower()):
-        return "sold_out"
-
-    # “Notify Me” button
-    if soup.find(["button","a"], string=lambda t: t and "notify me" in t.lower()):
-        return "sold_out"
-
-    # “Add to Cart” button state
-    add_btn = soup.find(["button","a"], string=lambda t: t and "add to cart" in t.lower())
+    # 1. Add to Cart button state
+    add_btn = soup.find(["button", "a"], string=lambda t: t and "add to cart" in t.lower())
     if add_btn:
         cls = add_btn.get("class") or []
         if add_btn.has_attr("disabled") or "disabled" in cls:
             return "sold_out"
         return "available"
-
-    # JSON-LD (optional)
+    # 2. Notify Me button or Sold Out text
+    if soup.find(["button", "a"], string=lambda t: t and "notify me" in t.lower()):
+        return "sold_out"
+    if soup.find(string=lambda t: t and "sold out" in t.lower()):
+        return "sold_out"
+    # 3. JSON-LD (optional)
     for s in soup.find_all("script", type="application/ld+json"):
         try:
-            import json as _json
-            data = _json.loads(s.string or "{}")
+            data = json.loads(s.string or "{}")
             nodes = data if isinstance(data, list) else [data]
             for n in nodes:
                 offers = n.get("offers")
                 if isinstance(offers, dict):
-                    av = str(offers.get("availability","")).lower()
+                    av = str(offers.get("availability", "")).lower()
                     if "instock" in av: return "available"
                     if "outofstock" in av: return "sold_out"
         except Exception:
             pass
-
     return "sold_out"
 
 def load_state():
     if STATE_FILE.exists():
         try: return json.loads(STATE_FILE.read_text())
         except Exception: pass
-    return {"status":"unknown"}
+    return {"status": "unknown", "last_alert_ts": 0}
 
 def save_state(state): STATE_FILE.write_text(json.dumps(state))
 
 def notify_telegram(msg: str):
     if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID): return
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg}, timeout=15)
-    except Exception:
-        pass
+        requests.post(url, json={"chat_id": TELEGRAM_CHAT_ID, "text": msg, "parse_mode": "Markdown"}, timeout=15)
+    except Exception as e:
+        logging.warning(f"Telegram notify failed: {e}")
 
 def notify_email(subject: str, body: str):
     SMTP_HOST = os.getenv("SMTP_HOST")
@@ -96,22 +107,35 @@ def notify_email(subject: str, body: str):
             s.starttls()
             s.login(SMTP_USER, SMTP_PASS)
             s.sendmail(EMAIL_FROM, [EMAIL_TO], msg.as_string())
-    except Exception:
-        pass
+    except Exception as e:
+        logging.warning(f"Email notify failed: {e}")
+
+def ist_now():
+    return datetime.now(timezone.utc).astimezone(timezone(timedelta(hours=5, minutes=30)))
 
 def main():
     html = fetch_html()
     status = detect_status(html)
     state = load_state()
-    prev = state.get("status")
-
-    # For testing alerts: set env FORCE_ALERT=1 in the workflow dispatch
+    prev = state.get("status", "unknown")
+    last_alert_ts = state.get("last_alert_ts", 0)
+    now_ts = int(time.time())
     force = os.getenv("FORCE_ALERT") == "1"
 
+    # Alert logic: only on transition, or re-alert every 12h if still available
+    should_alert = False
     if (status == "available" and prev != "available") or force:
-        msg = f"Amul product is {status.upper()} → {PRODUCT_URL}"
+        should_alert = True
+    elif status == "available" and prev == "available":
+        if now_ts - last_alert_ts > RE_ALERT_HOURS * 3600:
+            should_alert = True
+
+    if should_alert:
+        ist_time = ist_now().strftime('%Y-%m-%d %H:%M:%S IST')
+        msg = f"""*Amul Product Available!*\n[{PRODUCT_URL}]({PRODUCT_URL})\n_Time: {ist_time}_"""
         notify_telegram(msg)
-        notify_email(f"Amul product {status}", msg)
+        notify_email("Amul product available", f"Available at {PRODUCT_URL} (Checked: {ist_time})")
+        state["last_alert_ts"] = now_ts
 
     state["status"] = status
     save_state(state)
