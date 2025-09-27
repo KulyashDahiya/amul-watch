@@ -50,10 +50,10 @@ jobs:
           AMUL_PINCODE: "251001"
 
           # --- OPTIONAL flags (set repo variable if you want) ---
-          # FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
+          FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
 
           # --- FORCE_ALERT hardcoded as disabled ---
-          FORCE_ALERT: "0"
+          # FORCE_ALERT: "0"
 
           # --- OPTIONAL notifiers (leave blank if unused) ---
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
