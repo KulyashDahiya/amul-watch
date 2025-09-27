@@ -1,3 +1,4 @@
+dotenv
 playwright
 beautifulsoup4
 lxml
