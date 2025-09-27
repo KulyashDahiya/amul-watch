@@ -1,9 +1,6 @@
-# dotenv
-# playwright
 beautifulsoup4
 lxml
 requests
-# python-dotenv
 html5lib
 urllib3>=2.2.2
 python-dotenv>=1.0.1

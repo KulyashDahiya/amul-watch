@@ -15,6 +15,9 @@ import requests
 import smtplib
 from email.mime.text import MIMEText
 
+from dotenv import load_dotenv
+load_dotenv() 
+
 # ======================================
 # Config
 # ======================================

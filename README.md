@@ -1,14 +1,24 @@
-# Amul Product Availability Watcher
+# 🥛 Amul Stock Checker
 
-This bot checks the Amul product page for availability and sends you an alert on Telegram and/or email when the product becomes available.
+A robust Python bot that monitors the availability of **Amul protein products** (like Rose Lassi, Whey Protein, etc.) and sends alerts via **Telegram** and/or **Email** when stock changes are detected.
 
-## Features
-- Checks product status ("Add to Cart" enabled/disabled, "Sold Out", "Notify Me")
-- Alerts you only when the product becomes available
-- Sends notifications via Telegram and email
-- Runs automatically every 5 minutes using GitHub Actions (free for public repos)
+Supports:
+- ✅ GitHub Actions (auto-run every 5 minutes)
+- ✅ Local runs (one-shot or scheduled with cron/launchd)
+- ✅ State tracking (no duplicate alerts unless stock changes)
 
-## Setup
+---
+
+## ✨ Features
+- Track one or more Amul products by **alias** (e.g. `amul-high-protein-rose-lassi-200-ml-or-pack-of-30`)
+- Reliable **API-based stock checking**
+- **Email + Telegram** notifications
+- Works with your **local `.env`** or **GitHub secrets**
+- Stores last state in `state.json` (ignored by Git)
+
+---
+
+## 🚀 Setup
 
 1. **Clone this repo**
 2. **Install dependencies locally (optional for local testing):**
