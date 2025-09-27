@@ -19,6 +19,9 @@ from requests.cookies import RequestsCookieJar
 import smtplib
 from email.mime.text import MIMEText
 
+from dotenv import load_dotenv, find_dotenv
+load_dotenv(find_dotenv(), override=False)
+
 # ------------------------------------------------------------
 # Logging
 # ------------------------------------------------------------
@@ -353,9 +356,17 @@ def send_telegram(text: str) -> Optional[str]:
         return "telegram: missing bot envs; skipped"
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+        # Telegram HTML does NOT support <br>; keep real newlines instead.
+        safe = (
+            text.replace("<br/>", "\n")
+                .replace("<br />", "\n")
+                .replace("<br>", "\n")
+        )
+
         payload = {
             "chat_id": TELEGRAM_CHAT_ID,
-            "text": text,
+            "text": safe,
             "parse_mode": "HTML",
             "disable_web_page_preview": True,
         }
@@ -478,16 +489,18 @@ def main() -> None:
     # Notifications
     if alert_blocks:
         subject = "Amul Watch Alerts"
+
+        # keep plain text for email
         text_plain = "\n\n".join(b.replace("<b>", "").replace("</b>", "") for b in alert_blocks)
-        text_html_joined = "<br><br>".join(b.replace("\n", "<br>") for b in alert_blocks)
+
+        # Telegram can handle <b>…</b>, but keep real newlines (no <br>)
+        text_telegram = "\n\n".join(alert_blocks)
 
         em_err = send_email(subject, text_plain)
-        tg_err = send_telegram(text_html_joined)
+        tg_err = send_telegram(text_telegram)
 
-        if em_err:
-            log.warning(em_err)
-        if tg_err:
-            log.warning(tg_err)
+        if em_err: log.warning(em_err)
+        if tg_err: log.warning(tg_err)
 
     sys.exit(0)
 
