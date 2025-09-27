@@ -1,28 +1,94 @@
-name: Amul Watch
+name: Amul Watch (every 5 min)
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # every 5 minutes (UTC)
+    - cron: "*/5 * * * *"
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
-  check:
+  watch:
     runs-on: ubuntu-latest
+
+    env:
+      # --- Script configuration (override as needed) ---
+      AMUL_CATEGORY: protein
+      AMUL_SUBSTORE: 66505ff8c8f2d6e221b9180c
+      AMUL_LIMIT: "24"
+      AMUL_START: "0"
+      # Track Rose Lassi availability by default; comma-separate for more
+      AMUL_TARGET_ALIASES: "amul-high-protein-rose-lassi-200-ml-or-pack-of-30"
+      # Repo variable you already created (0/1)
+      FORCE_ALERT: ${{ vars.FORCE_ALERT }}
+      # Optional: define a secret for Slack/Discord/etc.
+      WEBHOOK_URL: ${{ secrets.WEBHOOK_URL }}
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # Create the /state directory the script expects.
+      - name: Prepare /state directory
+        run: sudo mkdir -p /state && sudo chmod 777 /state
+
+      # Restore previous state across runs using cache (best-effort).
+      # We cache the whole /state dir. The key includes a hash of the file if present
+      # so newer runs can restore the most recent version via restore-keys prefix.
+      - name: Compute cache key
+        id: keygen
+        run: |
+          if [ -f /state/amul_state.json ]; then
+            HASH=$(sha256sum /state/amul_state.json | cut -d' ' -f1)
+          else
+            HASH=empty
+          fi
+          echo "key=amul-state-v1-${HASH}" >> "$GITHUB_OUTPUT"
+          echo "prefix=amul-state-v1-" >> "$GITHUB_OUTPUT"
+
+      - name: Restore /state cache
+        id: cache-restore
+        uses: actions/cache/restore@v4
+        with:
+          path: /state
+          key: ${{ steps.keygen.outputs.key }}
+          restore-keys: |
+            ${{ steps.keygen.outputs.prefix }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install -r requirements.txt
-      - run: python -m playwright install chromium
-      - env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
-          SMTP_HOST:          ${{ secrets.SMTP_HOST }}
-          SMTP_PORT:          ${{ secrets.SMTP_PORT }}
-          SMTP_USER:          ${{ secrets.SMTP_USER }}
-          SMTP_PASS:          ${{ secrets.SMTP_PASS }}
-          EMAIL_TO:           ${{ secrets.EMAIL_TO }}
-          EMAIL_FROM:         ${{ secrets.EMAIL_FROM }}
-          FORCE_ALERT:        ${{ vars.FORCE_ALERT }}
-        run: python amul_watch.py
+
+      - name: Install Python deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests playwright
+
+      - name: Install Playwright browser
+        run: |
+          python -m playwright install --with-deps chromium
+
+      - name: Run watcher
+        run: |
+          chmod +x amul_watch.py
+          ./amul_watch.py
+
+      # Save updated state so the next run can restore it.
+      - name: Recompute cache key after run
+        id: keygen_after
+        run: |
+          if [ -f /state/amul_state.json ]; then
+            HASH=$(sha256sum /state/amul_state.json | cut -d' ' -f1)
+          else
+            HASH=empty
+          fi
+          echo "key=amul-state-v1-${HASH}" >> "$GITHUB_OUTPUT"
+
+      - name: Save /state cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: /state
+          key: ${{ steps.keygen_after.outputs.key }}
