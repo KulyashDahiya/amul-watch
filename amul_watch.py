@@ -21,11 +21,11 @@ load_dotenv()
 # ======================================
 # Config
 # ======================================
-RAW_ALIASES = os.getenv("AMUL_TARGET_ALIASES", "").strip()
-TARGET_ALIASES: List[str] = (
-    [a.strip() for a in RAW_ALIASES.split(",") if a.strip()]
-    or ["amul-high-protein-rose-lassi-200-ml-or-pack-of-30"]
-)
+
+# Hardcoded list of target aliases
+TARGET_ALIASES: List[str] = [
+    "amul-high-protein-rose-lassi-200-ml-or-pack-of-30"
+]
 FORCE_ALERT = os.getenv("FORCE_ALERT", "0").strip() in ("1", "true", "True")
 
 # Persist state in repo root (git-ignored)
@@ -430,7 +430,7 @@ def main() -> None:
 
             block = (
                 f"🛎 <b>{title}</b>\n"
-                f"{change_text}\n"
+                f"{change_text} : GithubAction Run\n"
                 f"Price: {price} | Inventory: {inv} | Available: {avail}\n"
                 f"{purl}"
             )
