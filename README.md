@@ -119,7 +119,7 @@ This repo includes datasets for richer region mapping:
 * **`data/substores.json`** → Amul substore IDs per region.
 * **`Pincodes/app_india_pincodes.geojson`**
 
-  * Detailed map of all India pincodes (~86 MB).
+  * Detailed map of all India pincodes (~86 MB).
   * Tracked with **Git LFS**.
   * Not required for normal watcher runs.
   * Useful if you want to:
