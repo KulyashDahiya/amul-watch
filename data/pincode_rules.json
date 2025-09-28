@@ -1,35 +1,100 @@
-[
-  { "prefix": "110", "alias": "delhi" },
-  { "prefix": "122", "alias": "haryana" },          // Gurgaon
-  { "prefix": "121", "alias": "haryana" },          // Faridabad
-  { "prefix": "201", "alias": "up-ncr" },           // Noida/Ghaziabad
-  { "prefix": "250", "alias": "uttar-pradesh-e" },  // Meerut belt (example)
-  { "prefix": "400", "alias": "mumbai-br" },
-  { "prefix": "401", "alias": "mumbai-br" },
-  { "prefix": "410", "alias": "pune-br" },
-  { "prefix": "411", "alias": "pune-br" },
-  { "prefix": "560", "alias": "karnataka" },        // Bengaluru
-  { "prefix": "562", "alias": "karnataka" },
-  { "prefix": "380", "alias": "gujarat" },          // Ahmedabad/Gandhinagar
-  { "prefix": "382", "alias": "gujarat" },
-  { "prefix": "395", "alias": "gujarat" },          // Surat
-  { "prefix": "380", "alias": "gujarat" },
-  { "prefix": "600", "alias": "tamil-nadu-1" },     // Chennai
-  { "prefix": "560", "alias": "karnataka" },
-  { "prefix": "700", "alias": "west-bengal" },      // Kolkata
-  { "prefix": "682", "alias": "kerala" },           // Kochi
-  { "prefix": "680", "alias": "kerala" },
-  { "prefix": "500", "alias": "telangana" },        // Hyderabad
-  { "prefix": "530", "alias": "andhra-pradesh" },   // Vizag
-  { "prefix": "302", "alias": "rajasthan" },        // Jaipur
-  { "prefix": "313", "alias": "rajasthan" },        // Udaipur
-  { "prefix": "141", "alias": "punjab" },           // Ludhiana
-  { "prefix": "160", "alias": "chandigarh" },
-  { "prefix": "180", "alias": "jandk" },
-  { "prefix": "248", "alias": "uttrakhand" },       // Dehradun
-  { "prefix": "452", "alias": "madhya-pradesh" },   // Indore
-  { "prefix": "462", "alias": "madhya-pradesh" },   // Bhopal
-  { "prefix": "751", "alias": "odisha" },           // Bhubaneswar
-  { "prefix": "403", "alias": "goa" },
-  { "prefix": "370", "alias": "daman-and-diu" }
-]
+{
+  "exact": {
+    "110001": "delhi",
+    "122001": "haryana",
+    "400001": "mumbai-br",
+    "560001": "karnataka",
+    "380001": "gujarat",
+    "500001": "telangana",
+    "700001": "west-bengal"
+  },
+  "prefix": {
+    "11": "delhi",
+    "12": "haryana",
+    "13": "punjab",
+    "14": "punjab",
+    "15": "punjab",
+    "16": "himachal-pradesh",
+    "17": "chandigarh",
+    "18": "jandk",
+    "19": "delhi",
+    "20": "up-ncr",
+    "21": "uttar-pradesh-e",
+    "22": "uttar-pradesh-e",
+    "23": "uttar-pradesh-e",
+    "24": "uttar-pradesh-e",
+    "25": "up-ncr",
+    "26": "uttar-pradesh-e",
+    "27": "uttar-pradesh-e",
+    "28": "uttar-pradesh-e",
+    "29": "uttar-pradesh-e",
+    "30": "rajasthan",
+    "31": "rajasthan",
+    "32": "rajasthan",
+    "33": "rajasthan",
+    "34": "rajasthan",
+    "36": "rajasthan",
+    "37": "gujarat",
+    "38": "gujarat",
+    "39": "gujarat",
+    "40": "mumbai-br",
+    "41": "pune-br",
+    "42": "nashik-br",
+    "43": "aurangabad-br",
+    "44": "solapur-br",
+    "45": "madhya-pradesh",
+    "46": "madhya-pradesh",
+    "47": "madhya-pradesh",
+    "48": "madhya-pradesh",
+    "49": "chhattisgarh",
+    "50": "telangana",
+    "51": "andhra-pradesh",
+    "52": "andhra-pradesh",
+    "53": "andhra-pradesh",
+    "56": "karnataka",
+    "57": "karnataka",
+    "58": "karnataka",
+    "59": "karnataka",
+    "60": "tamil-nadu-1",
+    "61": "tamil-nadu-1",
+    "62": "pondicherry",
+    "63": "tamil-nadu-1",
+    "67": "kerala",
+    "68": "kerala",
+    "69": "kerala",
+    "70": "west-bengal",
+    "71": "west-bengal",
+    "72": "west-bengal",
+    "73": "sikkim",
+    "74": "orissa",
+    "75": "odisha",
+    "76": "odisha",
+    "77": "odisha",
+    "78": "assam",
+    "79": "arunachal-pradesh",
+    "80": "bihar",
+    "81": "bihar",
+    "82": "jharkhand",
+    "83": "jharkhand",
+    "84": "bihar",
+    "85": "bihar",
+    "90": "delhi"
+  },
+  "ranges": [
+    {
+      "start": "122001",
+      "end": "122999",
+      "alias": "haryana"
+    },
+    {
+      "start": "180001",
+      "end": "199999",
+      "alias": "jandk"
+    },
+    {
+      "start": "900000",
+      "end": "999999",
+      "alias": "delhi"
+    }
+  ]
+}
