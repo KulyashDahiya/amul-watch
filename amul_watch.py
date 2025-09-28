@@ -16,25 +16,27 @@ import smtplib
 from email.mime.text import MIMEText
 
 from dotenv import load_dotenv
-load_dotenv() 
+load_dotenv()
 
 # ======================================
 # Config
 # ======================================
 
-# Hardcoded list of target aliases
+# Hardcoded list of target aliases — add/remove here
 TARGET_ALIASES: List[str] = [
     # Lassi/Shakes
     "amul-high-protein-rose-lassi-200-ml-or-pack-of-30",
     # "amul-high-protein-blueberry-shake-200-ml-or-pack-of-30",
 
-    # Whey
+    # Whey (examples)
     # "amul-whey-protein-gift-pack-32-g-or-pack-of-10-sachets",
     # "amul-whey-protein-32-g-or-pack-of-30-sachets",
 ]
-FORCE_ALERT = os.getenv("FORCE_ALERT", "0").strip() in ("1", "true", "True")
 
-# Persist state in repo root (git-ignored)
+# Only used for manual testing; otherwise keep "0"
+FORCE_ALERT = os.getenv("FORCE_ALERT", "0").strip().lower() in ("1", "true")
+
+# Persist state in repo root
 STATE_FILE = Path("state.json")
 
 # Notifications (optional)
@@ -48,11 +50,13 @@ SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
+# Detect environment
+RUN_CONTEXT = "GithubAction" if os.getenv("GITHUB_ACTIONS") == "true" else "Local"
+
 # Amul constants
 AMUL_API_BASE = "https://shop.amul.com/api/1/entity/ms.products"
-# Substore ID for UP/NCR (based on your working runs)
-SUBSTORE_ID = "66505ff8c8f2d6e221b9180c"
-STORE_ID = "62fa94df8c13af2e242eba16"
+SUBSTORE_ID = "66505ff8c8f2d6e221b9180c"   # UP/NCR (works with your pincode)
+STORE_ID    = "62fa94df8c13af2e242eba16"  # main store id
 
 FIELDS = [
     "name","brand","categories","collections","alias","sku","price","compare_price",
@@ -63,15 +67,17 @@ FIELDS = [
     "linked_product_id","seller_id","inventory_management_level"
 ]
 
-# Timeouts
-TIMEOUT_PAGE = 60  # initial cookie / page hit
-TIMEOUT_API  = 45  # API calls (info.js / products)
+# Timeouts / retries
+TIMEOUT_PAGE = 60
+TIMEOUT_API  = 45
 RETRIES_INIT = 4
 RETRIES_API  = 4
 
 # Logging
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("amul-watch")
+
+log.info(f"Starting Amul Watch in {RUN_CONTEXT} mode")
 
 # ======================================
 # Helpers
@@ -80,8 +86,6 @@ def ts() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
 
 _UA_POOL = [
-    # modern Chrome on multiple platforms
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/137.0.0.0 Safari/537.36",
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.6 Safari/605.1.15",
@@ -90,7 +94,6 @@ def rand_ua() -> str:
     return random.choice(_UA_POOL)
 
 def default_headers() -> Dict[str, str]:
-    # cloudflare-friendly headers
     return {
         "accept": "application/json, text/plain, */*",
         "accept-language": "en-US,en;q=0.9",
@@ -113,7 +116,6 @@ def default_headers() -> Dict[str, str]:
     }
 
 def backoff_sleep(attempt: int, base: float = 1.0, cap: float = 12.0):
-    # exponential backoff + jitter
     delay = min(cap, base * (2 ** (attempt - 1))) + random.uniform(0, 0.75)
     time.sleep(delay)
 
@@ -130,9 +132,10 @@ def with_retries(fn: Callable[[], Any], tries: int, label: str) -> Any:
     raise last_err  # type: ignore
 
 def sanitize_for_telegram_html(text: str) -> str:
-    # Telegram HTML: allow <b>, <i>, <u>, <s>, <a href="">, <code>, <pre>
-    # We'll avoid <br>. Replace newlines with \n and remove other tags.
     return text.replace("<br>", "\n").replace("<br/>", "\n").replace("<br />", "\n")
+
+def product_url(alias: str) -> str:
+    return f"https://shop.amul.com/en/product/{alias}"
 
 # ======================================
 # Session bootstrap (cookies + tid + preference)
@@ -141,39 +144,31 @@ class AmulSession:
     def __init__(self):
         self.s = requests.Session()
         self.s.headers.update(default_headers())
-        self.tid_session: Optional[str] = None  # value from /user/info.js
-        self.cookie_ready = False
+        self.tid_session: Optional[str] = None
 
     def _calc_tid_header(self) -> str:
-        # emulate site JS: `${STORE_ID}:${timestamp}:${rand}:${sessionID}`
         timestamp = str(int(time.time() * 1000))
         rand = str(random.randint(0, 999))
-        session_id = self.tid_session or ""  # can be empty for first call
+        session_id = self.tid_session or ""
         payload = f"{STORE_ID}:{timestamp}:{rand}:{session_id}".encode("utf-8")
         digest = hashlib.sha256(payload).hexdigest()
         return f"{timestamp}:{rand}:{digest}"
 
     def init_cookies(self):
-        # 1) hit a normal page to get cookies
         with_retries(
-            lambda: self.s.get("https://shop.amul.com/en/browse/protein",
-                               timeout=TIMEOUT_PAGE),
+            lambda: self.s.get("https://shop.amul.com/en/browse/protein", timeout=TIMEOUT_PAGE),
             tries=RETRIES_INIT,
             label="init:page"
         )
-        self.cookie_ready = True
 
-        # 2) fetch user/info.js to learn session tid (first call works without tid)
         def _info():
             h = default_headers()
-            # first call: no tid header required; subsequent runs will use it
             r = self.s.get(
                 f"https://shop.amul.com/user/info.js?_v={int(time.time()*1000)}",
                 headers=h,
                 timeout=TIMEOUT_API
             )
             r.raise_for_status()
-            # response like: session = {...}
             txt = r.text.strip()
             if not txt.startswith("session = "):
                 raise RuntimeError("unexpected info.js body")
@@ -287,7 +282,7 @@ def save_state(state: Dict[str, Any]) -> None:
         log.warning(f"Could not write state {STATE_FILE}: {e}")
 
 # ======================================
-# Change detection & summaries
+# Availability-only alerting
 # ======================================
 def summarize_item(p: Dict[str, Any]) -> str:
     alias = p.get("alias")
@@ -297,41 +292,16 @@ def summarize_item(p: Dict[str, Any]) -> str:
     avail = p.get("available")
     return f"- {name} | alias: {alias} | price: {price} | inventory: {inv} | available: {avail}"
 
-def detect_changes(prev: Dict[str, Any], cur: Dict[str, Any]) -> List[str]:
-    changes = []
-
-    def gv(d, *keys):
-        for k in keys:
-            if k in d and d[k] is not None:
-                return d[k]
-        return None
-
-    p_avail = prev.get("available")
-    c_avail = cur.get("available")
-    p_inv = prev.get("inventory_quantity")
-    c_inv = cur.get("inventory_quantity")
-    p_price = gv(prev, "our_price", "price")
-    c_price = gv(cur, "our_price", "price")
-
-    if p_avail != c_avail:
-        changes.append("✅ Now AVAILABLE" if c_avail else "⛔️ Became UNAVAILABLE")
-
-    if p_inv != c_inv:
-        if p_inv is None and c_inv is not None:
-            changes.append(f"ℹ️ Inventory set to {c_inv}")
-        elif isinstance(p_inv, int) and isinstance(c_inv, int):
-            delta = c_inv - p_inv
-            if delta > 0: changes.append(f"📈 Inventory increased by {delta} → {c_inv}")
-            elif delta < 0: changes.append(f"📉 Inventory decreased by {-delta} → {c_inv}")
-
-    if p_price != c_price and c_price is not None:
-        if p_price is None:
-            changes.append(f"💰 Price set to {c_price}")
-        else:
-            if c_price < p_price: changes.append(f"💸 Price drop {p_price} → {c_price}")
-            elif c_price > p_price: changes.append(f"💵 Price increase {p_price} → {c_price}")
-
-    return changes
+def should_alert_availability(prev: Dict[str, Any], cur: Dict[str, Any]) -> bool:
+    """
+    Only alert when availability becomes True.
+    - If prev.available was False/None and cur.available is True => alert
+    - If prev.available was True and cur.available is True => no alert (still available)
+    - If cur.available is False => no alert
+    """
+    prev_av = prev.get("available")
+    cur_av = cur.get("available")
+    return bool(cur_av) and not bool(prev_av)
 
 # ======================================
 # Notifiers (optional)
@@ -366,18 +336,15 @@ def send_telegram(text_html: str) -> Optional[str]:
     except Exception as e:
         return f"telegram error: {e}"
 
-def product_url(alias: str) -> str:
-    return f"https://shop.amul.com/en/product/{alias}"
-
 # ======================================
 # Main
 # ======================================
 def main() -> None:
     if not TARGET_ALIASES:
-        print("::error ::AMUL_TARGET_ALIASES is not set (or empty). Set it to one or more aliases.")
+        print("::error ::No TARGET_ALIASES configured in script.")
         sys.exit(1)
 
-    # Bootstrap session (cookie + tid + preference)
+    # Bootstrap session
     sess = AmulSession()
     try:
         with_retries(lambda: sess.init_cookies(), tries=RETRIES_INIT, label="bootstrap:cookies")
@@ -386,7 +353,7 @@ def main() -> None:
         print(f"::notice ::Session init failed (will retry next run): {e}")
         sys.exit(0)
 
-    # Fetch
+    # Fetch products
     try:
         payload = fetch_by_aliases(sess, TARGET_ALIASES)
     except Exception as e:
@@ -419,24 +386,28 @@ def main() -> None:
             log.warning(msg)
             continue
 
-        changes = detect_changes(prev, cur)
-        should_alert = bool(changes) or FORCE_ALERT
+        # Availability-only alert logic
+        do_alert = should_alert_availability(prev, cur) or FORCE_ALERT
 
         summary_lines.append(summarize_item(cur))
 
-        if should_alert:
-            change_text = " | ".join(changes) if changes else "FORCE_ALERT"
+        if do_alert:
             title = cur.get("name") or cur.get("alias")
+            if FORCE_ALERT and not should_alert_availability(prev, cur):
+                change_text = "FORCE_ALERT"
+            else:
+                change_text = "✅ Now AVAILABLE"
+
             print(f"::warning ::{title} — {change_text}")
 
-            purl = product_url(cur.get("alias"))
             price = cur.get("our_price") or cur.get("price")
             inv = cur.get("inventory_quantity")
             avail = cur.get("available")
+            purl = product_url(cur.get("alias"))
 
             block = (
                 f"🛎 <b>{title}</b>\n"
-                f"{change_text} : Local Run\n"
+                f"{change_text} : {RUN_CONTEXT} Run\n"
                 f"Price: {price} | Inventory: {inv} | Available: {avail}\n"
                 f"{purl}"
             )
@@ -446,16 +417,17 @@ def main() -> None:
                 "ts": ts(),
                 "alias": cur.get("alias"),
                 "name": title,
-                "changes": changes if changes else ["FORCE_ALERT"],
+                "changes": [change_text],
                 "snapshot": {
-                    "available": cur.get("available"),
+                    "available": avail,
                     "inventory_quantity": inv,
                     "price": price,
                 }
             })
         else:
-            print(f"::notice ::No change for {cur.get('alias')} (available={cur.get('available')}, inv={cur.get('inventory_quantity')})")
+            print(f"::notice ::No availability change for {cur.get('alias')} (available={cur.get('available')})")
 
+        # Update snapshot (only fields we need)
         state["tracked"][key] = {
             "available": cur.get("available"),
             "inventory_quantity": cur.get("inventory_quantity"),
@@ -465,7 +437,7 @@ def main() -> None:
 
     save_state(state)
 
-    # GitHub job summary
+    # GitHub job summary (optional)
     summary_path = os.getenv("GITHUB_STEP_SUMMARY")
     if summary_path:
         try:
@@ -478,7 +450,7 @@ def main() -> None:
     if alert_blocks:
         subject = "Amul Watch Alerts"
         text_plain = "\n\n".join(b.replace("<b>", "").replace("</b>", "") for b in alert_blocks)
-        text_html_joined = "\n\n".join(alert_blocks)  # keep \n; no <br> for Telegram
+        text_html_joined = "\n\n".join(alert_blocks)
 
         em_err = send_email(subject, text_plain)
         tg_err = send_telegram(text_html_joined)

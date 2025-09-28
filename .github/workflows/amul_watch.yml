@@ -37,37 +37,48 @@ jobs:
       - name: Install Playwright Chromium (fallback path)
         run: python -m playwright install chromium
 
+      # ---------------------------
+      # Persist state.json
+      # ---------------------------
+      - name: Restore state.json cache
+        uses: actions/cache/restore@v4
+        with:
+          path: state.json
+          key: amul-state-${{ runner.os }}-${{ hashFiles('amul_watch.py') }}
+          restore-keys: |
+            amul-state-${{ runner.os }}-
+
       - name: Prepare state file
         run: |
-          # ensure state.json exists in repo root
           if [ ! -f state.json ]; then
             echo "{}" > state.json
           fi
+          jq '.' state.json || true
 
       - name: Run Amul Watch
         env:
-          AMUL_PINCODE: "251001"
-
-          # Uses Repo Variable ; Default is disabled.
-          FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
-
-          # --- FORCE_ALERT hardcoded as disabled ---
-          # FORCE_ALERT: "0"
-
-          # --- OPTIONAL notifiers (leave blank if unused) ---
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-
           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
+          # Uses Repo Variable ; Default is disabled.
+          # FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
+          FORCE_ALERT: "1"   # keep disabled unless debugging
         run: |
           python amul_watch.py
+
+      - name: Save state.json cache
+        uses: actions/cache/save@v4
+        with:
+          path: state.json
+          key: amul-state-${{ runner.os }}-${{ github.run_id }}
 
       - name: Upload job summary (always show)
         if: always()
         run: |
           echo "Run finished at $(date -u +"%Y-%m-%d %H:%M:%SZ")" >> "$GITHUB_STEP_SUMMARY"
+

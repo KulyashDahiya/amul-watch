@@ -1,6 +1,3 @@
 .env
 *.log
-amul_state.json
-# Ignore state files
-/state/
 state.json
