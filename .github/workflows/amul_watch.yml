@@ -1,3 +1,89 @@
+# name: Amul Watch
+
+# on:
+#   schedule:
+#     - cron: "*/5 * * * *"   # every 5 minutes
+#   workflow_dispatch: {}
+
+# permissions:
+#   contents: read
+
+# jobs:
+#   watch:
+#     runs-on: ubuntu-latest
+
+#     steps:
+#       - name: Checkout
+#         uses: actions/checkout@v4
+
+#       - name: Set up Python
+#         uses: actions/setup-python@v5
+#         with:
+#           python-version: "3.11"
+
+#       - name: Cache pip
+#         uses: actions/cache@v4
+#         with:
+#           path: ~/.cache/pip
+#           key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+#           restore-keys: |
+#             ${{ runner.os }}-pip-
+
+#       - name: Install dependencies
+#         run: |
+#           python -m pip install --upgrade pip
+#           pip install -r requirements.txt
+
+#       - name: Install Playwright Chromium (fallback path)
+#         run: python -m playwright install chromium
+
+#       # ---------------------------
+#       # Persist state.json
+#       # ---------------------------
+#       - name: Restore state.json cache
+#         uses: actions/cache/restore@v4
+#         with:
+#           path: state.json
+#           key: amul-state-${{ runner.os }}-${{ hashFiles('amul_watch.py') }}
+#           restore-keys: |
+#             amul-state-${{ runner.os }}-
+
+#       - name: Prepare state file
+#         run: |
+#           if [ ! -f state.json ]; then
+#             echo "{}" > state.json
+#           fi
+#           jq '.' state.json || true
+
+#       - name: Run Amul Watch
+#         env:
+#           AMUL_PINCODE: "251001"
+
+#           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+#           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+#           EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+#           EMAIL_TO: ${{ secrets.EMAIL_TO }}
+#           SMTP_HOST: ${{ secrets.SMTP_HOST }}
+#           SMTP_PORT: ${{ secrets.SMTP_PORT }}
+#           SMTP_USER: ${{ secrets.SMTP_USER }}
+#           SMTP_PASS: ${{ secrets.SMTP_PASS }}
+#           # Uses Repo Variable ; Default is disabled.
+#           FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
+#           # FORCE_ALERT: "1"   # keep disabled unless debugging
+#         run: |
+#           python amul_watch.py
+
+#       - name: Save state.json cache
+#         uses: actions/cache/save@v4
+#         with:
+#           path: state.json
+#           key: amul-state-${{ runner.os }}-${{ github.run_id }}
+
+#       - name: Upload job summary (always show)
+#         if: always()
+#         run: |
+#           echo "Run finished at $(date -u +"%Y-%m-%d %H:%M:%SZ")" >> "$GITHUB_STEP_SUMMARY"
+
 name: Amul Watch
 
 on:
@@ -5,82 +91,82 @@ on:
     - cron: "*/5 * * * *"   # every 5 minutes
   workflow_dispatch: {}
 
+concurrency:
+  group: amul-watch
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
   watch:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
-      - name: Checkout
+      - name: Checkout (shallow)
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
 
       - name: Set up Python
+        id: py
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Cache pip
+      # Cache the whole venv so installs are skipped on cache hits
+      - name: Cache venv
+        id: cache-venv
         uses: actions/cache@v4
         with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+          path: .venv
+          key: venv-${{ runner.os }}-${{ steps.py.outputs.python-version }}-${{ hashFiles('requirements.txt') }}
 
-      - name: Install dependencies
+      - name: Create venv & install deps (on cache miss)
+        if: steps.cache-venv.outputs.cache-hit != 'true'
         run: |
+          python -m venv .venv
+          . .venv/bin/activate
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Install Playwright Chromium (fallback path)
-        run: python -m playwright install chromium
-
-      # ---------------------------
-      # Persist state.json
-      # ---------------------------
       - name: Restore state.json cache
+        id: state-restore
         uses: actions/cache/restore@v4
         with:
           path: state.json
-          key: amul-state-${{ runner.os }}-${{ hashFiles('amul_watch.py') }}
-          restore-keys: |
-            amul-state-${{ runner.os }}-
+          key: amul-state
 
-      - name: Prepare state file
+      - name: Prepare state file (ensure exists)
         run: |
           if [ ! -f state.json ]; then
             echo "{}" > state.json
           fi
-          jq '.' state.json || true
 
       - name: Run Amul Watch
         env:
-          AMUL_PINCODE: "251001"
-
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
-          EMAIL_TO: ${{ secrets.EMAIL_TO }}
-          SMTP_HOST: ${{ secrets.SMTP_HOST }}
-          SMTP_PORT: ${{ secrets.SMTP_PORT }}
-          SMTP_USER: ${{ secrets.SMTP_USER }}
-          SMTP_PASS: ${{ secrets.SMTP_PASS }}
-          # Uses Repo Variable ; Default is disabled.
+          TELEGRAM_CHAT_ID:  ${{ secrets.TELEGRAM_CHAT_ID }}
+          EMAIL_FROM:        ${{ secrets.EMAIL_FROM }}
+          EMAIL_TO:          ${{ secrets.EMAIL_TO }}
+          SMTP_HOST:         ${{ secrets.SMTP_HOST }}
+          SMTP_PORT:         ${{ secrets.SMTP_PORT }}
+          SMTP_USER:         ${{ secrets.SMTP_USER }}
+          SMTP_PASS:         ${{ secrets.SMTP_PASS }}
           FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
-          # FORCE_ALERT: "1"   # keep disabled unless debugging
+          RUN_ENV:           "GitHub_Action"     # shows up in your message text
         run: |
+          . .venv/bin/activate
           python amul_watch.py
 
       - name: Save state.json cache
+        if: always()
         uses: actions/cache/save@v4
         with:
           path: state.json
-          key: amul-state-${{ runner.os }}-${{ github.run_id }}
+          key: amul-state
 
       - name: Upload job summary (always show)
         if: always()
-        run: |
-          echo "Run finished at $(date -u +"%Y-%m-%d %H:%M:%SZ")" >> "$GITHUB_STEP_SUMMARY"
-
+        run: echo "Run finished at $(date -u +"%Y-%m-%d %H:%M:%SZ")" >> "$GITHUB_STEP_SUMMARY"
