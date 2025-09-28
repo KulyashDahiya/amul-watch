@@ -1,3 +1,17 @@
-.env
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual envs
+.venv/
+venv/
+
+# OS / editors
+.DS_Store
 *.log
+
+# Local only
+.env
 state.json
