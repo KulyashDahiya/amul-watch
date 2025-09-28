@@ -66,8 +66,8 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASS: ${{ secrets.SMTP_PASS }}
           # Uses Repo Variable ; Default is disabled.
-          # FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
-          FORCE_ALERT: "1"   # keep disabled unless debugging
+          FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
+          # FORCE_ALERT: "1"   # keep disabled unless debugging
         run: |
           python amul_watch.py
 
