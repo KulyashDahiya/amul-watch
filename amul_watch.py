@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+
 import os
 import sys
 import json
@@ -7,56 +9,46 @@ import random
 import logging
 import hashlib
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Callable
+from typing import Dict, Any, List, Optional, Callable, Tuple
 from datetime import datetime, timezone
 from urllib.parse import urlencode, quote_plus
 
 import requests
 import smtplib
 from email.mime.text import MIMEText
-
 from dotenv import load_dotenv
+
 load_dotenv()
 
-# ======================================
-# Config
-# ======================================
+# =========================
+# Inputs / config
+# =========================
 
-# Hardcoded list of target aliases — add/remove here
 TARGET_ALIASES: List[str] = [
-    # Lassi/Shakes
     "amul-high-protein-rose-lassi-200-ml-or-pack-of-30",
-    # "amul-high-protein-blueberry-shake-200-ml-or-pack-of-30",
-
-    # Whey (examples)
-    # "amul-whey-protein-gift-pack-32-g-or-pack-of-10-sachets",
-    # "amul-whey-protein-32-g-or-pack-of-30-sachets",
+    # add more…
 ]
 
-# Only used for manual testing; otherwise keep "0"
-FORCE_ALERT = os.getenv("FORCE_ALERT", "0").strip().lower() in ("1", "true")
+PINCODE = (os.getenv("PINCODE") or "").strip()
+FORCE_ALERT = (os.getenv("FORCE_ALERT", "0").strip().lower() in ("1", "true"))
 
-# Persist state in repo root
-STATE_FILE = Path("state.json")
-
-# Notifications (optional)
 EMAIL_FROM = os.getenv("EMAIL_FROM", "").strip()
-EMAIL_TO = os.getenv("EMAIL_TO", "").strip()
-SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587").strip() or "587")
-SMTP_USER = os.getenv("SMTP_USER", "").strip()
-SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
+EMAIL_TO   = os.getenv("EMAIL_TO", "").strip()
+SMTP_HOST  = os.getenv("SMTP_HOST", "").strip()
+SMTP_PORT  = int(os.getenv("SMTP_PORT", "587") or "587")
+SMTP_USER  = os.getenv("SMTP_USER", "").strip()
+SMTP_PASS  = os.getenv("SMTP_PASS", "").strip()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
-# Detect environment
-RUN_CONTEXT = "GithubAction" if os.getenv("GITHUB_ACTIONS") == "true" else "Local"
+RUN_CONTEXT = os.getenv("RUN_ENV") or ("GithubAction" if os.getenv("GITHUB_ACTIONS") == "true" else "Local")
 
-# Amul constants
+STATE_FILE = Path("state.json")
+DATA_PIN_RULES = Path("data/pincode_rules.json")
+
 AMUL_API_BASE = "https://shop.amul.com/api/1/entity/ms.products"
-SUBSTORE_ID = "66505ff8c8f2d6e221b9180c"   # UP/NCR (works with your pincode)
-STORE_ID    = "62fa94df8c13af2e242eba16"  # main store id
+STORE_ID      = "62fa94df8c13af2e242eba16"
 
 FIELDS = [
     "name","brand","categories","collections","alias","sku","price","compare_price",
@@ -67,22 +59,20 @@ FIELDS = [
     "linked_product_id","seller_id","inventory_management_level"
 ]
 
-# Timeouts / retries
 TIMEOUT_PAGE = 60
 TIMEOUT_API  = 45
 RETRIES_INIT = 4
 RETRIES_API  = 4
 
-# Logging
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("amul-watch")
-
 log.info("Current Time IST: " + datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S"))
-log.info(f"Starting Amul Watch in {RUN_CONTEXT} mode")
+log.info(f"Starting Amul Watch in {RUN_CONTEXT} mode; PIN={PINCODE or 'N/A'}")
 
-# ======================================
+# =========================
 # Helpers
-# ======================================
+# =========================
+
 def ts() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%SZ")
 
@@ -138,9 +128,43 @@ def sanitize_for_telegram_html(text: str) -> str:
 def product_url(alias: str) -> str:
     return f"https://shop.amul.com/en/product/{alias}"
 
-# ======================================
-# Session bootstrap (cookies + tid + preference)
-# ======================================
+def read_rules() -> Dict[str, Any]:
+    if DATA_PIN_RULES.exists():
+        try:
+            return json.loads(DATA_PIN_RULES.read_text(encoding="utf-8"))
+        except Exception as e:
+            log.warning(f"Could not read {DATA_PIN_RULES}: {e}")
+    return {}
+
+def alias_from_rules(pincode: str, rules: Dict[str, Any]) -> Optional[str]:
+    if not pincode:
+        return None
+    # exact
+    exact = (rules.get("exact") or {})
+    if pincode in exact:
+        a = (exact[pincode] or "").strip()
+        return a or None
+    # prefix (prefer longest)
+    best: Optional[Tuple[str, str]] = None
+    for pref, alias in (rules.get("prefix") or {}).items():
+        if pincode.startswith(pref):
+            if best is None or len(pref) > len(best[0]):
+                best = (pref, alias)
+    if best:
+        a = (best[1] or "").strip()
+        if a:
+            return a
+    # ranges
+    for rng in (rules.get("ranges") or []):
+        s = rng.get("start"); e = rng.get("end"); a = (rng.get("alias") or "").strip()
+        if s and e and a and s <= pincode <= e:
+            return a
+    return None
+
+# =========================
+# Amul session
+# =========================
+
 class AmulSession:
     def __init__(self):
         self.s = requests.Session()
@@ -148,12 +172,11 @@ class AmulSession:
         self.tid_session: Optional[str] = None
 
     def _calc_tid_header(self) -> str:
-        timestamp = str(int(time.time() * 1000))
-        rand = str(random.randint(0, 999))
-        session_id = self.tid_session or ""
-        payload = f"{STORE_ID}:{timestamp}:{rand}:{session_id}".encode("utf-8")
+        ts_ms = str(int(time.time() * 1000))
+        rand  = str(random.randint(0, 999))
+        payload = f"{STORE_ID}:{ts_ms}:{rand}:{self.tid_session or ''}".encode("utf-8")
         digest = hashlib.sha256(payload).hexdigest()
-        return f"{timestamp}:{rand}:{digest}"
+        return f"{ts_ms}:{rand}:{digest}"
 
     def init_cookies(self):
         with_retries(
@@ -161,7 +184,6 @@ class AmulSession:
             tries=RETRIES_INIT,
             label="init:page"
         )
-
         def _info():
             h = default_headers()
             r = self.s.get(
@@ -180,7 +202,8 @@ class AmulSession:
             log.info("Got session tid.")
         with_retries(_info, tries=RETRIES_INIT, label="init:info")
 
-    def set_preference_substore(self, substore_alias: str = "up-ncr"):
+    def set_preference_store(self, substore_alias: str):
+        """Set store directly (fast path from local rules)."""
         def _setpref():
             h = default_headers()
             h["tid"] = self._calc_tid_header()
@@ -191,13 +214,32 @@ class AmulSession:
                 timeout=TIMEOUT_API
             )
             if r.status_code not in (200, 204):
-                raise RuntimeError(f"setPreferences {r.status_code}: {r.text[:200]}")
-        with_retries(_setpref, tries=RETRIES_INIT, label="init:pref")
-        log.info(f"Preference set for pincode 251001 (substore up-ncr).")
+                raise RuntimeError(f"setPreferences(store) {r.status_code}: {r.text[:200]}")
+        with_retries(_setpref, tries=RETRIES_INIT, label="pref:store")
+        log.info(f"Preference set via local rules: substore '{substore_alias}'.")
 
-# ======================================
-# Fetch products by aliases (requires substore id)
-# ======================================
+    def set_preference_pincode(self, pincode: str):
+        """Fallback: let server resolve substore from pincode."""
+        if not pincode:
+            raise ValueError("Missing pincode")
+        def _setpref():
+            h = default_headers()
+            h["tid"] = self._calc_tid_header()
+            r = self.s.put(
+                "https://shop.amul.com/entity/ms.settings/_/setPreferences",
+                json={"data": {"pincode": pincode}},
+                headers=h,
+                timeout=TIMEOUT_API
+            )
+            if r.status_code not in (200, 204):
+                raise RuntimeError(f"setPreferences(pincode) {r.status_code}: {r.text[:200]}")
+        with_retries(_setpref, tries=RETRIES_INIT, label="pref:pincode")
+        log.info(f"Preference set by pincode (server-resolved): {pincode}.")
+
+# =========================
+# Products
+# =========================
+
 def build_api_url(aliases: List[str]) -> str:
     params = []
     for f in FIELDS:
@@ -215,10 +257,10 @@ def build_api_url(aliases: List[str]) -> str:
         ("total", "1"),
         ("start", "0"),
         ("cdc", "1m"),
-        ("substore", SUBSTORE_ID),
         ("limit", str(max(32, len(aliases) + 8))),
         ("_", str(int(time.time()))),
     ]
+    # no "substore" query — cookie preference controls it
     return f"{AMUL_API_BASE}?{urlencode(params, doseq=True, quote_via=quote_plus)}"
 
 def fetch_by_aliases(session: AmulSession, aliases: List[str]) -> Dict[str, Any]:
@@ -257,9 +299,20 @@ def fetch_by_aliases(session: AmulSession, aliases: List[str]) -> Dict[str, Any]
             }
         raise RuntimeError(f"All fetch attempts failed. Last error: {last_err}")
 
-# ======================================
-# State helpers
-# ======================================
+def sanity_check_store(session: AmulSession) -> bool:
+    """Make a tiny call to confirm current preference works."""
+    try:
+        probe_alias = [TARGET_ALIASES[0]]
+        _ = fetch_by_aliases(session, probe_alias)
+        return True
+    except Exception as e:
+        log.warning(f"Store preference sanity check failed: {e}")
+        return False
+
+# =========================
+# State & alerting
+# =========================
+
 def ensure_state_dir() -> Path:
     d = STATE_FILE.parent
     d.mkdir(parents=True, exist_ok=True)
@@ -282,9 +335,6 @@ def save_state(state: Dict[str, Any]) -> None:
     except Exception as e:
         log.warning(f"Could not write state {STATE_FILE}: {e}")
 
-# ======================================
-# Availability-only alerting
-# ======================================
 def summarize_item(p: Dict[str, Any]) -> str:
     alias = p.get("alias")
     name = p.get("name")
@@ -294,19 +344,12 @@ def summarize_item(p: Dict[str, Any]) -> str:
     return f"- {name} | alias: {alias} | price: {price} | inventory: {inv} | available: {avail}"
 
 def should_alert_availability(prev: Dict[str, Any], cur: Dict[str, Any]) -> bool:
-    """
-    Only alert when availability becomes True.
-    - If prev.available was False/None and cur.available is True => alert
-    - If prev.available was True and cur.available is True => no alert (still available)
-    - If cur.available is False => no alert
-    """
-    prev_av = prev.get("available")
-    cur_av = cur.get("available")
-    return bool(cur_av) and not bool(prev_av)
+    return bool(cur.get("available")) and not bool(prev.get("available"))
 
-# ======================================
-# Notifiers (optional)
-# ======================================
+# =========================
+# Notifiers
+# =========================
+
 def send_email(subject: str, body: str) -> Optional[str]:
     if not (EMAIL_FROM and EMAIL_TO and SMTP_HOST and SMTP_USER and SMTP_PASS):
         return "email: missing SMTP envs; skipped"
@@ -337,19 +380,42 @@ def send_telegram(text_html: str) -> Optional[str]:
     except Exception as e:
         return f"telegram error: {e}"
 
-# ======================================
+# =========================
 # Main
-# ======================================
+# =========================
+
 def main() -> None:
     if not TARGET_ALIASES:
         print("::error ::No TARGET_ALIASES configured in script.")
         sys.exit(1)
 
-    # Bootstrap session
+    if not PINCODE or not PINCODE.isdigit() or len(PINCODE) != 6:
+        print("::error ::PINCODE is missing/invalid. Set repo variable PINCODE to a 6-digit value.")
+        sys.exit(1)
+
+    rules = read_rules()
+
     sess = AmulSession()
     try:
         with_retries(lambda: sess.init_cookies(), tries=RETRIES_INIT, label="bootstrap:cookies")
-        with_retries(lambda: sess.set_preference_substore("up-ncr"), tries=RETRIES_INIT, label="bootstrap:pref")
+
+        # 1) Try local rules → store alias
+        used_fallback = False
+        alias = alias_from_rules(PINCODE, rules)
+        if alias:
+            try:
+                with_retries(lambda: sess.set_preference_store(alias), tries=RETRIES_INIT, label="bootstrap:pref-store")
+                # quick sanity check; if it fails, fall back to pin
+                if not sanity_check_store(sess):
+                    raise RuntimeError("sanity-check failed after setting store alias")
+            except Exception as e:
+                log.warning(f"Local-rule substore path failed: {e}; falling back to pincode preference.")
+                used_fallback = True
+
+        # 2) If no alias, or alias path failed → set pincode (server resolves)
+        if not alias or used_fallback:
+            with_retries(lambda: sess.set_preference_pincode(PINCODE), tries=RETRIES_INIT, label="bootstrap:pref-pin")
+
     except Exception as e:
         print(f"::notice ::Session init failed (will retry next run): {e}")
         sys.exit(0)
@@ -363,17 +429,15 @@ def main() -> None:
 
     items = payload.get("data") or []
     by_alias = {(p.get("alias") or "").strip().lower(): p for p in items}
-
     missing = [a for a in TARGET_ALIASES if a.strip().lower() not in by_alias]
     if missing:
         log.warning(f"Missing {len(missing)} alias(es) from response: {missing}")
 
-    # State
     state = load_state()
     state.setdefault("tracked", {})
     state.setdefault("history", [])
 
-    summary_lines = [f"### Amul Watch @ {ts()}"]
+    summary_lines = [f"### Amul Watch @ {ts()} (PIN {PINCODE})"]
     alert_blocks: List[str] = []
 
     for a in TARGET_ALIASES:
@@ -387,18 +451,12 @@ def main() -> None:
             log.warning(msg)
             continue
 
-        # Availability-only alert logic
         do_alert = should_alert_availability(prev, cur) or FORCE_ALERT
-
         summary_lines.append(summarize_item(cur))
 
         if do_alert:
             title = cur.get("name") or cur.get("alias")
-            if FORCE_ALERT and not should_alert_availability(prev, cur):
-                change_text = "FORCE_ALERT"
-            else:
-                change_text = "✅ Now AVAILABLE"
-
+            change_text = "FORCE_ALERT" if (FORCE_ALERT and not should_alert_availability(prev, cur)) else "✅ Now AVAILABLE"
             print(f"::warning ::{title} — {change_text}")
 
             price = cur.get("our_price") or cur.get("price")
@@ -408,7 +466,7 @@ def main() -> None:
 
             block = (
                 f"🛎 <b>{title}</b>\n"
-                f"{change_text} : {RUN_CONTEXT} Run\n"
+                f"{change_text} : {RUN_CONTEXT} Run (PIN {PINCODE})\n"
                 f"Price: {price} | Inventory: {inv} | Available: {avail}\n"
                 f"{purl}"
             )
@@ -428,7 +486,6 @@ def main() -> None:
         else:
             print(f"::notice ::No availability change for {cur.get('alias')} (available={cur.get('available')})")
 
-        # Update snapshot (only fields we need)
         state["tracked"][key] = {
             "available": cur.get("available"),
             "inventory_quantity": cur.get("inventory_quantity"),
@@ -438,7 +495,6 @@ def main() -> None:
 
     save_state(state)
 
-    # GitHub job summary (optional)
     summary_path = os.getenv("GITHUB_STEP_SUMMARY")
     if summary_path:
         try:
@@ -447,15 +503,12 @@ def main() -> None:
         except Exception as e:
             log.warning(f"Could not write job summary: {e}")
 
-    # Send notifications
     if alert_blocks:
         subject = "Amul Watch Alerts"
         text_plain = "\n\n".join(b.replace("<b>", "").replace("</b>", "") for b in alert_blocks)
         text_html_joined = "\n\n".join(alert_blocks)
-
         em_err = send_email(subject, text_plain)
         tg_err = send_telegram(text_html_joined)
-
         if em_err: log.warning(em_err)
         if tg_err: log.warning(tg_err)
 

@@ -2,32 +2,45 @@ name: Amul Watch
 
 on:
   schedule:
-    - cron: "*/5 * * * *"   # every 5 minutes
+    - cron: '*/5 * * * *'     # every 5 minutes
   workflow_dispatch: {}
-
-concurrency:
-  group: amul-watch
-  cancel-in-progress: true
 
 permissions:
   contents: read
 
+concurrency:
+  group: amul-watch-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TZ: Asia/Kolkata
+  RUN_ENV: "GitHub_Action"
+  PINCODE:      ${{ vars.PINCODE }}                 # e.g. 110092 (set in repo Variables)
+  FORCE_ALERT:  ${{ vars.FORCE_ALERT || '0' }}      # optional, defaults to 0
+
+  TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+  TELEGRAM_CHAT_ID:   ${{ secrets.TELEGRAM_CHAT_ID }}
+  EMAIL_FROM:         ${{ secrets.EMAIL_FROM }}
+  EMAIL_TO:           ${{ secrets.EMAIL_TO }}
+  SMTP_HOST:          ${{ secrets.SMTP_HOST }}
+  SMTP_PORT:          ${{ secrets.SMTP_PORT }}
+  SMTP_USER:          ${{ secrets.SMTP_USER }}
+  SMTP_PASS:          ${{ secrets.SMTP_PASS }}
+
 jobs:
   watch:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
 
     steps:
-      - name: Checkout (shallow)
+      - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 1
 
+      # Get Python and expose version for venv cache key
       - name: Set up Python
         id: py
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: '3.11'
 
       # Cache the whole venv so installs are skipped on cache hits
       - name: Cache venv
@@ -45,12 +58,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # Restore last run's state.json (so we only alert on transitions)
       - name: Restore state.json cache
         id: state-restore
         uses: actions/cache/restore@v4
         with:
           path: state.json
-          key: amul-state
+          key: amul-state-${{ github.ref }}-${{ github.run_id }}   # unique; won't match
+          restore-keys: |
+            amul-state-${{ github.ref }}-
+            amul-state-
 
       - name: Prepare state file (ensure exists)
         run: |
@@ -58,29 +75,21 @@ jobs:
             echo "{}" > state.json
           fi
 
-      - name: Run Amul Watch
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID:  ${{ secrets.TELEGRAM_CHAT_ID }}
-          EMAIL_FROM:        ${{ secrets.EMAIL_FROM }}
-          EMAIL_TO:          ${{ secrets.EMAIL_TO }}
-          SMTP_HOST:         ${{ secrets.SMTP_HOST }}
-          SMTP_PORT:         ${{ secrets.SMTP_PORT }}
-          SMTP_USER:         ${{ secrets.SMTP_USER }}
-          SMTP_PASS:         ${{ secrets.SMTP_PASS }}
-          FORCE_ALERT: ${{ vars.FORCE_ALERT || '0' }}
-          RUN_ENV:           "GitHub_Action"     # shows up in your message text
+      - name: Run watcher
         run: |
           . .venv/bin/activate
           python amul_watch.py
 
+      # Save updated state.json for next run (rolling latest via restore-keys)
       - name: Save state.json cache
         if: always()
         uses: actions/cache/save@v4
         with:
           path: state.json
-          key: amul-state
+          key: amul-state-${{ github.ref }}-${{ github.run_id }}
 
-      - name: Upload job summary (always show)
+      - name: Add short summary
         if: always()
-        run: echo "Run finished at $(date -u +"%Y-%m-%d %H:%M:%SZ")" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          echo "Run completed at $(date '+%Y-%m-%d %H:%M:%S %Z')" >> "$GITHUB_STEP_SUMMARY"
+          echo "PIN: ${PINCODE:-N/A}" >> "$GITHUB_STEP_SUMMARY"
