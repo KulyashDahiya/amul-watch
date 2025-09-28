@@ -1,3 +1,11 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 .env
-*.log
+
+# State
 state.json
+state.tmp
+*.tmp

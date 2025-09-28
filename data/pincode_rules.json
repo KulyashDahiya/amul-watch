@@ -1,0 +1,35 @@
+[
+  { "prefix": "110", "alias": "delhi" },
+  { "prefix": "122", "alias": "haryana" },          // Gurgaon
+  { "prefix": "121", "alias": "haryana" },          // Faridabad
+  { "prefix": "201", "alias": "up-ncr" },           // Noida/Ghaziabad
+  { "prefix": "250", "alias": "uttar-pradesh-e" },  // Meerut belt (example)
+  { "prefix": "400", "alias": "mumbai-br" },
+  { "prefix": "401", "alias": "mumbai-br" },
+  { "prefix": "410", "alias": "pune-br" },
+  { "prefix": "411", "alias": "pune-br" },
+  { "prefix": "560", "alias": "karnataka" },        // Bengaluru
+  { "prefix": "562", "alias": "karnataka" },
+  { "prefix": "380", "alias": "gujarat" },          // Ahmedabad/Gandhinagar
+  { "prefix": "382", "alias": "gujarat" },
+  { "prefix": "395", "alias": "gujarat" },          // Surat
+  { "prefix": "380", "alias": "gujarat" },
+  { "prefix": "600", "alias": "tamil-nadu-1" },     // Chennai
+  { "prefix": "560", "alias": "karnataka" },
+  { "prefix": "700", "alias": "west-bengal" },      // Kolkata
+  { "prefix": "682", "alias": "kerala" },           // Kochi
+  { "prefix": "680", "alias": "kerala" },
+  { "prefix": "500", "alias": "telangana" },        // Hyderabad
+  { "prefix": "530", "alias": "andhra-pradesh" },   // Vizag
+  { "prefix": "302", "alias": "rajasthan" },        // Jaipur
+  { "prefix": "313", "alias": "rajasthan" },        // Udaipur
+  { "prefix": "141", "alias": "punjab" },           // Ludhiana
+  { "prefix": "160", "alias": "chandigarh" },
+  { "prefix": "180", "alias": "jandk" },
+  { "prefix": "248", "alias": "uttrakhand" },       // Dehradun
+  { "prefix": "452", "alias": "madhya-pradesh" },   // Indore
+  { "prefix": "462", "alias": "madhya-pradesh" },   // Bhopal
+  { "prefix": "751", "alias": "odisha" },           // Bhubaneswar
+  { "prefix": "403", "alias": "goa" },
+  { "prefix": "370", "alias": "daman-and-diu" }
+]

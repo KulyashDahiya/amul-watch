@@ -11,52 +11,70 @@ from typing import Dict, Any, List, Optional, Callable
 from datetime import datetime, timezone
 from urllib.parse import urlencode, quote_plus
 
+import argparse
 import requests
 import smtplib
 from email.mime.text import MIMEText
 
-from dotenv import load_dotenv
-load_dotenv()
+# Load .env locally; in Actions we pass env directly
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
 # ======================================
-# Config
+# Config (env + constants)
 # ======================================
 
-# Hardcoded list of target aliases — add/remove here
+# Target product aliases (edit as you like)
 TARGET_ALIASES: List[str] = [
     # Lassi/Shakes
     "amul-high-protein-rose-lassi-200-ml-or-pack-of-30",
     # "amul-high-protein-blueberry-shake-200-ml-or-pack-of-30",
-
-    # Whey (examples)
-    # "amul-whey-protein-gift-pack-32-g-or-pack-of-10-sachets",
-    # "amul-whey-protein-32-g-or-pack-of-30-sachets",
 ]
 
-# Only used for manual testing; otherwise keep "0"
-FORCE_ALERT = os.getenv("FORCE_ALERT", "0").strip().lower() in ("1", "true")
+# Repo / workflow inputs
+FORCE_ALERT = os.getenv("FORCE_ALERT", "0").strip().lower() in ("1", "true", "yes")
+RUN_CONTEXT = os.getenv("RUN_ENV") or ("GithubAction" if os.getenv("GITHUB_ACTIONS") == "true" else "Local")
 
-# Persist state in repo root
-STATE_FILE = Path("state.json")
+# PIN handling: PIN_SELECTED (preferred) -> first of PINCODES -> PINCODE
+def _pick_pin_from_env() -> Optional[str]:
+    pin = (os.getenv("PIN_SELECTED") or "").strip()
+    if pin:
+        return pin
+    pins_env = (os.getenv("PINCODES") or "").strip()
+    if pins_env:
+        # comma/space tolerant
+        pins = [p.strip() for p in pins_env.replace(";", ",").replace(" ", ",").split(",") if p.strip()]
+        if pins:
+            return pins[0]
+    pin = (os.getenv("PINCODE") or "").strip()
+    return pin or None
+
+PINCODE_IN_USE = _pick_pin_from_env()
+
+# Optional store overrides (set these as vars/secrets if you know them)
+SUBSTORE_ALIAS_OVERRIDE = (os.getenv("SUBSTORE_ALIAS") or "").strip()  # e.g., "up-ncr"
+SUBSTORE_ID_OVERRIDE    = (os.getenv("SUBSTORE_ID") or "").strip()     # e.g., "66505ff8c8f2d6e221b9180c"
 
 # Notifications (optional)
 EMAIL_FROM = os.getenv("EMAIL_FROM", "").strip()
-EMAIL_TO = os.getenv("EMAIL_TO", "").strip()
-SMTP_HOST = os.getenv("SMTP_HOST", "").strip()
-SMTP_PORT = int(os.getenv("SMTP_PORT", "587").strip() or "587")
-SMTP_USER = os.getenv("SMTP_USER", "").strip()
-SMTP_PASS = os.getenv("SMTP_PASS", "").strip()
+EMAIL_TO   = os.getenv("EMAIL_TO", "").strip()
+SMTP_HOST  = os.getenv("SMTP_HOST", "").strip()
+SMTP_PORT  = int(os.getenv("SMTP_PORT", "587").strip() or "587")
+SMTP_USER  = os.getenv("SMTP_USER", "").strip()
+SMTP_PASS  = os.getenv("SMTP_PASS", "").strip()
 
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+TELEGRAM_CHAT_ID   = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
-# Detect environment
-RUN_CONTEXT = "GithubAction" if os.getenv("GITHUB_ACTIONS") == "true" else "Local"
+# Files
+STATE_FILE = Path("state.json")
 
-# Amul constants
+# Amul endpoints / fields
 AMUL_API_BASE = "https://shop.amul.com/api/1/entity/ms.products"
-SUBSTORE_ID = "66505ff8c8f2d6e221b9180c"   # UP/NCR (works with your pincode)
-STORE_ID    = "62fa94df8c13af2e242eba16"  # main store id
+STORE_ID      = "62fa94df8c13af2e242eba16"  # main store id (stable)
 
 FIELDS = [
     "name","brand","categories","collections","alias","sku","price","compare_price",
@@ -78,7 +96,7 @@ logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("amul-watch")
 
 log.info("Current Time IST: " + datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S"))
-log.info(f"Starting Amul Watch in {RUN_CONTEXT} mode")
+log.info(f"Starting Amul Watch in {RUN_CONTEXT} mode; PIN={PINCODE_IN_USE or 'n/a'}")
 
 # ======================================
 # Helpers
@@ -139,6 +157,30 @@ def product_url(alias: str) -> str:
     return f"https://shop.amul.com/en/product/{alias}"
 
 # ======================================
+# PIN → substore alias heuristics
+# ======================================
+def guess_substore_alias(pin: Optional[str]) -> str:
+    """
+    Minimal heuristic:
+      - 110xxx (Delhi) → up-ncr
+      - 12x/13x (Haryana) → up-ncr (safe default for NCR proximity)
+      - 20–28xxxx (UP regions around NCR) → up-ncr
+      - else fallback to up-ncr
+    You can expand this as you learn more substore aliases.
+    """
+    if not pin or len(pin) < 3:
+        return "up-ncr"
+    p3 = pin[:3]
+    p2 = pin[:2]
+    if p3.startswith("110"):
+        return "up-ncr"
+    if p2 in {"12", "13"}:
+        return "up-ncr"
+    if p2 in {str(n) for n in range(20, 29)}:
+        return "up-ncr"
+    return "up-ncr"
+
+# ======================================
 # Session bootstrap (cookies + tid + preference)
 # ======================================
 class AmulSession:
@@ -180,23 +222,26 @@ class AmulSession:
             log.info("Got session tid.")
         with_retries(_info, tries=RETRIES_INIT, label="init:info")
 
-    def set_preference_substore(self, substore_alias: str = "up-ncr"):
+    def set_preference_substore(self, pin: Optional[str] = None):
+        # decide alias
+        alias = SUBSTORE_ALIAS_OVERRIDE or guess_substore_alias(pin)
+
         def _setpref():
             h = default_headers()
             h["tid"] = self._calc_tid_header()
             r = self.s.put(
                 "https://shop.amul.com/entity/ms.settings/_/setPreferences",
-                json={"data": {"store": substore_alias}},
+                json={"data": {"store": alias}},
                 headers=h,
                 timeout=TIMEOUT_API
             )
             if r.status_code not in (200, 204):
                 raise RuntimeError(f"setPreferences {r.status_code}: {r.text[:200]}")
         with_retries(_setpref, tries=RETRIES_INIT, label="init:pref")
-        log.info(f"Preference set for pincode 251001 (substore up-ncr).")
+        log.info(f"Preference set for PIN {pin or 'n/a'} (substore alias: {alias}).")
 
 # ======================================
-# Fetch products by aliases (requires substore id)
+# Fetch products by aliases
 # ======================================
 def build_api_url(aliases: List[str]) -> str:
     params = []
@@ -215,10 +260,12 @@ def build_api_url(aliases: List[str]) -> str:
         ("total", "1"),
         ("start", "0"),
         ("cdc", "1m"),
-        ("substore", SUBSTORE_ID),
         ("limit", str(max(32, len(aliases) + 8))),
         ("_", str(int(time.time()))),
     ]
+    # Include substore only if caller provided a known ID
+    if SUBSTORE_ID_OVERRIDE:
+        params.append(("substore", SUBSTORE_ID_OVERRIDE))
     return f"{AMUL_API_BASE}?{urlencode(params, doseq=True, quote_via=quote_plus)}"
 
 def fetch_by_aliases(session: AmulSession, aliases: List[str]) -> Dict[str, Any]:
@@ -294,12 +341,6 @@ def summarize_item(p: Dict[str, Any]) -> str:
     return f"- {name} | alias: {alias} | price: {price} | inventory: {inv} | available: {avail}"
 
 def should_alert_availability(prev: Dict[str, Any], cur: Dict[str, Any]) -> bool:
-    """
-    Only alert when availability becomes True.
-    - If prev.available was False/None and cur.available is True => alert
-    - If prev.available was True and cur.available is True => no alert (still available)
-    - If cur.available is False => no alert
-    """
     prev_av = prev.get("available")
     cur_av = cur.get("available")
     return bool(cur_av) and not bool(prev_av)
@@ -340,7 +381,14 @@ def send_telegram(text_html: str) -> Optional[str]:
 # ======================================
 # Main
 # ======================================
+def parse_args():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--geojson", help="Optional path to a selected PIN geojson (not required for API)", default=None)
+    return ap.parse_args()
+
 def main() -> None:
+    args = parse_args()
+
     if not TARGET_ALIASES:
         print("::error ::No TARGET_ALIASES configured in script.")
         sys.exit(1)
@@ -349,7 +397,7 @@ def main() -> None:
     sess = AmulSession()
     try:
         with_retries(lambda: sess.init_cookies(), tries=RETRIES_INIT, label="bootstrap:cookies")
-        with_retries(lambda: sess.set_preference_substore("up-ncr"), tries=RETRIES_INIT, label="bootstrap:pref")
+        with_retries(lambda: sess.set_preference_substore(PINCODE_IN_USE), tries=RETRIES_INIT, label="bootstrap:pref")
     except Exception as e:
         print(f"::notice ::Session init failed (will retry next run): {e}")
         sys.exit(0)
@@ -373,7 +421,7 @@ def main() -> None:
     state.setdefault("tracked", {})
     state.setdefault("history", [])
 
-    summary_lines = [f"### Amul Watch @ {ts()}"]
+    summary_lines = [f"### Amul Watch @ {ts()}  |  PIN={PINCODE_IN_USE or 'n/a'}  |  RUN={RUN_CONTEXT}"]
     alert_blocks: List[str] = []
 
     for a in TARGET_ALIASES:
@@ -408,7 +456,7 @@ def main() -> None:
 
             block = (
                 f"🛎 <b>{title}</b>\n"
-                f"{change_text} : {RUN_CONTEXT} Run\n"
+                f"{change_text} : {RUN_CONTEXT} Run | PIN {PINCODE_IN_USE or 'n/a'}\n"
                 f"Price: {price} | Inventory: {inv} | Available: {avail}\n"
                 f"{purl}"
             )
@@ -423,7 +471,8 @@ def main() -> None:
                     "available": avail,
                     "inventory_quantity": inv,
                     "price": price,
-                }
+                },
+                "pin": PINCODE_IN_USE,
             })
         else:
             print(f"::notice ::No availability change for {cur.get('alias')} (available={cur.get('available')})")
