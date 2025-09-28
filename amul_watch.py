@@ -77,6 +77,7 @@ RETRIES_API  = 4
 logging.basicConfig(level=logging.INFO, format="[%(levelname)s] %(message)s")
 log = logging.getLogger("amul-watch")
 
+log.info("Current Time IST: " + datetime.now(timezone.utc).astimezone().strftime("%Y-%m-%d %H:%M:%S"))
 log.info(f"Starting Amul Watch in {RUN_CONTEXT} mode")
 
 # ======================================
